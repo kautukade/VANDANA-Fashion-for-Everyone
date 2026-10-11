@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowRight, Bag, Check, ChevronDown, Heart, Instagram, Menu, Minus, Plus, Search, ShieldCheck, ShoppingBag, Sparkles, Star, Truck, UserRound, X, Zap } from 'lucide-react'
+import { ArrowRight, Check, ChevronDown, Heart, Instagram, Menu, Minus, Plus, Search, ShieldCheck, ShoppingBag, Sparkles, Star, Truck, UserRound, X, Zap } from 'lucide-react'
 import { categories, products, type Product } from './data'
 import { useStore } from './store'
 import HeroScene from './HeroScene'
@@ -43,7 +43,7 @@ function Header() {
       <div className="header-actions">
         <button className="icon-btn search-trigger" onClick={() => navigate('/shop')} aria-label="Search"><Search size={19} /></button>
         <Link className="icon-btn" to="/wishlist" aria-label="Wishlist"><Heart size={19}/>{wishlist.length > 0 && <em>{wishlist.length}</em>}</Link>
-        <Link className="icon-btn" to="/cart" aria-label="Cart"><Bag size={20}/>{cartCount > 0 && <em>{cartCount}</em>}</Link>
+        <Link className="icon-btn" to="/cart" aria-label="Cart"><ShoppingBag size={20}/>{cartCount > 0 && <em>{cartCount}</em>}</Link>
         <button className="menu-btn" onClick={() => setOpen(true)} aria-label="Menu"><Menu /></button>
       </div>
     </header>
