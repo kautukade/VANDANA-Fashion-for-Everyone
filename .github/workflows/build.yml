@@ -6,25 +6,11 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: write
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Repair unsupported icon import
-        run: |
-          sed -i 's/ArrowRight, Bag, Check/ArrowRight, Check/' src/App.tsx
-          sed -i 's/<Bag size={20}\/>/<ShoppingBag size={20}\/>/' src/App.tsx
-          if ! git diff --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src/App.tsx
-            git commit -m "fix: use supported shopping bag icon"
-            git push
-          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 20
