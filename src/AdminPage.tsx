@@ -1,0 +1,199 @@
+import { ChangeEvent, FormEvent, useMemo, useState } from 'react'
+import { BarChart3, Box, Check, ChevronRight, ExternalLink, Image as ImageIcon, LayoutDashboard, LogOut, Package, Plus, RefreshCcw, Save, Settings, ShoppingBag, Store, Trash2, Upload, X } from 'lucide-react'
+import { defaultProducts, type Product } from './data'
+import { defaultSiteConfig, readSiteConfig, saveSiteConfig, type SiteConfig } from './siteConfig'
+
+type Tab = 'dashboard' | 'store' | 'homepage' | 'products' | 'orders' | 'security'
+type DemoOrder = {
+  id: string
+  createdAt: string
+  status: string
+  payment: string
+  customer: { mobile: string; email: string; name: string; address: string; city: string; pincode: string; state: string; landmark: string }
+  items: { product: Product; size: string; qty: number }[]
+  total: number
+}
+
+const readJSON = <T,>(key: string, fallback: T): T => {
+  try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback } catch { return fallback }
+}
+const writeJSON = (key: string, value: unknown) => localStorage.setItem(key, JSON.stringify(value))
+const money = (value: number) => `₹${Number(value || 0).toLocaleString('en-IN')}`
+const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+
+const blankProduct = (): Product => ({
+  id: Date.now(), slug: '', name: '', category: 'Women', subcategory: '', price: 999, mrp: 1299,
+  image: 'https://images.unsplash.com/photo-1496747611176-843222e1e57c?auto=format&fit=crop&w=1200&q=86',
+  image2: 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=1200&q=86',
+  badge: 'NEW', sizes: ['S','M','L','XL'], colors: ['Black'], rating: 4.8, stock: 10, description: ''
+})
+
+const resizeImage = (file: File, maxSize: number, quality = .82) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onerror = () => reject(new Error('Unable to read image'))
+  reader.onload = () => {
+    const img = new Image()
+    img.onerror = () => reject(new Error('Unable to load image'))
+    img.onload = () => {
+      const scale = Math.min(1, maxSize / Math.max(img.width, img.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(img.width * scale))
+      canvas.height = Math.max(1, Math.round(img.height * scale))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return reject(new Error('Canvas unavailable'))
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      resolve(canvas.toDataURL('image/jpeg', quality))
+    }
+    img.src = String(reader.result)
+  }
+  reader.readAsDataURL(file)
+})
+
+function Login({ onSuccess }: { onSuccess: () => void }) {
+  const [pin, setPin] = useState('')
+  const [error, setError] = useState('')
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    const expected = localStorage.getItem('vandana-admin-pin') || 'vandana2026'
+    if (pin === expected) {
+      sessionStorage.setItem('vandana-admin-auth', '1')
+      onSuccess()
+    } else setError('Incorrect admin password')
+  }
+  return <main className="admin-login">
+    <form onSubmit={submit} className="admin-login-card">
+      <div className="admin-login-logo">V</div>
+      <span>VANDANA COMMERCE</span>
+      <h1>Admin Control</h1>
+      <p>Manage storefront content, products, inventory and demo orders.</p>
+      <label>Admin password<input autoFocus type="password" value={pin} onChange={e=>setPin(e.target.value)} placeholder="Enter password"/></label>
+      {error && <div className="admin-error">{error}</div>}
+      <button type="submit">SIGN IN <ChevronRight/></button>
+      <small>Demo admin • production authentication will move to Supabase.</small>
+    </form>
+  </main>
+}
+
+export default function AdminPage() {
+  const [authed, setAuthed] = useState(() => sessionStorage.getItem('vandana-admin-auth') === '1')
+  const [tab, setTab] = useState<Tab>('dashboard')
+  const [config, setConfig] = useState<SiteConfig>(() => readSiteConfig())
+  const [products, setProducts] = useState<Product[]>(() => readJSON('vandana-products', defaultProducts))
+  const [orders, setOrders] = useState<DemoOrder[]>(() => readJSON('vandana-orders', []))
+  const [editing, setEditing] = useState<Product | null>(null)
+  const [saved, setSaved] = useState('')
+  const [newPin, setNewPin] = useState('')
+
+  const metrics = useMemo(() => ({
+    products: products.length,
+    stock: products.reduce((sum,p)=>sum + Number(p.stock || 0), 0),
+    low: products.filter(p=>p.stock <= 5).length,
+    orders: orders.length,
+    revenue: orders.reduce((sum,o)=>sum + Number(o.total || 0), 0),
+  }), [products, orders])
+
+  if (!authed) return <Login onSuccess={()=>setAuthed(true)}/>
+
+  const flash = (message: string) => { setSaved(message); window.setTimeout(()=>setSaved(''), 1800) }
+  const saveConfig = () => { saveSiteConfig(config); flash('Website settings saved') }
+  const saveProducts = (next: Product[], message = 'Products updated') => { setProducts(next); writeJSON('vandana-products', next); flash(message) }
+  const saveOrders = (next: DemoOrder[]) => { setOrders(next); writeJSON('vandana-orders', next); flash('Order updated') }
+
+  const onLogo = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]; if (!file) return
+    try { setConfig(c=>({...c,logoData: await resizeImage(file, 500, .86)})); flash('Logo loaded — save settings') } catch { flash('Could not load logo') }
+  }
+  const onProductImage = async (e: ChangeEvent<HTMLInputElement>, key: 'image'|'image2') => {
+    const file = e.target.files?.[0]; if (!file || !editing) return
+    try { const data = await resizeImage(file, 1000, .8); setEditing(p=>p ? {...p,[key]:data} : p) } catch { flash('Could not load image') }
+  }
+
+  const submitProduct = (e: FormEvent) => {
+    e.preventDefault(); if (!editing) return
+    const product = { ...editing, slug: editing.slug || slugify(editing.name), price: Number(editing.price), mrp: Number(editing.mrp), stock: Number(editing.stock), rating: Number(editing.rating) }
+    const exists = products.some(p=>p.id===product.id)
+    const next = exists ? products.map(p=>p.id===product.id?product:p) : [product,...products]
+    saveProducts(next, exists ? 'Product updated' : 'Product added')
+    setEditing(null)
+  }
+
+  const nav: { key: Tab; label: string; icon: JSX.Element }[] = [
+    {key:'dashboard',label:'Dashboard',icon:<LayoutDashboard/>},{key:'store',label:'Store settings',icon:<Store/>},{key:'homepage',label:'Homepage',icon:<ImageIcon/>},{key:'products',label:'Products & stock',icon:<Package/>},{key:'orders',label:'Orders',icon:<ShoppingBag/>},{key:'security',label:'Access & reset',icon:<Settings/>}
+  ]
+
+  return <div className="admin-shell">
+    <aside className="admin-sidebar">
+      <div className="admin-brand"><div>V</div><span><b>VANDANA</b><small>COMMERCE ADMIN</small></span></div>
+      <nav>{nav.map(item=><button key={item.key} className={tab===item.key?'active':''} onClick={()=>setTab(item.key)}>{item.icon}<span>{item.label}</span></button>)}</nav>
+      <div className="admin-side-bottom">
+        <a href="/" target="_blank" rel="noreferrer"><ExternalLink/> View storefront</a>
+        <button onClick={()=>{sessionStorage.removeItem('vandana-admin-auth');setAuthed(false)}}><LogOut/> Sign out</button>
+      </div>
+    </aside>
+
+    <section className="admin-content">
+      <header className="admin-topbar"><div><small>VANDANA / ADMIN</small><h2>{nav.find(n=>n.key===tab)?.label}</h2></div><div className="admin-top-actions">{saved&&<span className="saved-pill"><Check/> {saved}</span>}<a href="/" target="_blank" rel="noreferrer">Preview store <ExternalLink/></a></div></header>
+
+      {tab==='dashboard' && <div className="admin-page">
+        <div className="admin-heading"><div><span>OVERVIEW</span><h1>Store control center</h1><p>This demo uses browser persistence, so every control works without a backend connection.</p></div></div>
+        <div className="metric-grid">
+          <article><Box/><span>Products</span><b>{metrics.products}</b><small>{metrics.stock} total units</small></article>
+          <article><BarChart3/><span>Demo orders</span><b>{metrics.orders}</b><small>{money(metrics.revenue)} order value</small></article>
+          <article><Package/><span>Low stock</span><b>{metrics.low}</b><small>5 units or fewer</small></article>
+          <article><Store/><span>Storefront</span><b>LIVE</b><small>Admin changes apply after refresh</small></article>
+        </div>
+        <div className="admin-panel"><div className="panel-title"><div><span>RECENT ORDERS</span><h3>Latest activity</h3></div><button onClick={()=>setTab('orders')}>View all</button></div>
+          {orders.length ? <div className="order-list">{orders.slice(0,5).map(o=><div key={o.id}><b>{o.id}</b><span>{o.customer.name || o.customer.mobile}</span><span>{money(o.total)}</span><em>{o.status}</em></div>)}</div> : <div className="admin-empty">Place a demo order from the storefront and it will appear here.</div>}
+        </div>
+      </div>}
+
+      {tab==='store' && <div className="admin-page narrow">
+        <div className="admin-heading"><div><span>BRAND & CONTACT</span><h1>Store settings</h1><p>Change the customer-facing name, logo, contact details and footer information.</p></div><button className="admin-primary" onClick={saveConfig}><Save/> Save changes</button></div>
+        <div className="admin-form-card">
+          <div className="admin-grid two"><label>Store name<input value={config.storeName} onChange={e=>setConfig({...config,storeName:e.target.value})}/></label><label>Tagline<input value={config.tagline} onChange={e=>setConfig({...config,tagline:e.target.value})}/></label></div>
+          <div className="admin-grid two"><label>WhatsApp number<input value={config.whatsapp} onChange={e=>setConfig({...config,whatsapp:e.target.value})}/></label><label>Instagram handle<input value={config.instagram} onChange={e=>setConfig({...config,instagram:e.target.value})}/></label></div>
+          <label>Store address<input value={config.address} onChange={e=>setConfig({...config,address:e.target.value})}/></label>
+          <label>Opening / contact text<input value={config.hours} onChange={e=>setConfig({...config,hours:e.target.value})}/></label>
+          <label>Footer description<textarea rows={3} value={config.footerText} onChange={e=>setConfig({...config,footerText:e.target.value})}/></label>
+          <div className="upload-row"><div className="logo-preview">{config.logoData?<img src={config.logoData} alt="Logo preview"/>:<b>{config.storeName.charAt(0)||'V'}</b>}</div><div><b>Store logo</b><p>Upload JPG/PNG. It is automatically resized for the demo.</p><label className="upload-btn"><Upload/> Upload logo<input type="file" accept="image/*" onChange={onLogo}/></label>{config.logoData&&<button className="link-danger" onClick={()=>setConfig({...config,logoData:''})}>Remove logo</button>}</div></div>
+        </div>
+      </div>}
+
+      {tab==='homepage' && <div className="admin-page narrow">
+        <div className="admin-heading"><div><span>CONTENT</span><h1>Homepage control</h1><p>Edit the announcement bar, hero content and campaign banner.</p></div><button className="admin-primary" onClick={saveConfig}><Save/> Save changes</button></div>
+        <div className="admin-form-card"><h3>Announcement bar</h3><div className="admin-grid three"><label>Message 1<input value={config.announcement1} onChange={e=>setConfig({...config,announcement1:e.target.value})}/></label><label>Message 2<input value={config.announcement2} onChange={e=>setConfig({...config,announcement2:e.target.value})}/></label><label>Message 3<input value={config.announcement3} onChange={e=>setConfig({...config,announcement3:e.target.value})}/></label></div>
+          <h3>Hero section</h3><label>Eyebrow<input value={config.heroEyebrow} onChange={e=>setConfig({...config,heroEyebrow:e.target.value})}/></label><div className="admin-grid three"><label>Title line 1<input value={config.heroTitleLine1} onChange={e=>setConfig({...config,heroTitleLine1:e.target.value})}/></label><label>Accent word<input value={config.heroTitleAccent} onChange={e=>setConfig({...config,heroTitleAccent:e.target.value})}/></label><label>Title line 2<input value={config.heroTitleLine2} onChange={e=>setConfig({...config,heroTitleLine2:e.target.value})}/></label></div><label>Description<textarea rows={3} value={config.heroBody} onChange={e=>setConfig({...config,heroBody:e.target.value})}/></label><label>Hero image URL<input value={config.heroImage} onChange={e=>setConfig({...config,heroImage:e.target.value})}/></label>
+          <h3>Campaign banner</h3><div className="admin-grid two"><label>Eyebrow<input value={config.editorialEyebrow} onChange={e=>setConfig({...config,editorialEyebrow:e.target.value})}/></label><label>Headline<input value={config.editorialTitle} onChange={e=>setConfig({...config,editorialTitle:e.target.value})}/></label></div><label>Description<textarea rows={2} value={config.editorialBody} onChange={e=>setConfig({...config,editorialBody:e.target.value})}/></label><label>Banner image URL<input value={config.editorialImage} onChange={e=>setConfig({...config,editorialImage:e.target.value})}/></label>
+        </div>
+      </div>}
+
+      {tab==='products' && <div className="admin-page">
+        <div className="admin-heading"><div><span>CATALOG</span><h1>Products & inventory</h1><p>Add, edit and remove products. Price, sizes, colours and stock are customer-facing after storefront refresh.</p></div><button className="admin-primary" onClick={()=>setEditing(blankProduct())}><Plus/> Add product</button></div>
+        <div className="product-admin-grid">{products.map(p=><article key={p.id} className="admin-product"><img src={p.image} alt={p.name}/><div><small>{p.category} · {p.subcategory}</small><h3>{p.name}</h3><p><b>{money(p.price)}</b> <s>{money(p.mrp)}</s></p><span className={p.stock<=5?'stock low':'stock'}>{p.stock} in stock</span></div><div className="admin-product-actions"><button onClick={()=>setEditing({...p})}>Edit</button><button className="danger" onClick={()=>{if(confirm(`Delete ${p.name}?`))saveProducts(products.filter(x=>x.id!==p.id),'Product deleted')}}><Trash2/></button></div></article>)}</div>
+        <div className="admin-reset-row"><button onClick={()=>{if(confirm('Reset products to the original demo catalog?')) saveProducts(defaultProducts,'Demo products restored')}}><RefreshCcw/> Restore demo catalog</button></div>
+      </div>}
+
+      {tab==='orders' && <div className="admin-page">
+        <div className="admin-heading"><div><span>ORDER MANAGEMENT</span><h1>Demo orders</h1><p>Checkout orders appear here automatically. Status changes are persistent in the demo browser.</p></div></div>
+        <div className="orders-table"><div className="orders-head"><span>Order</span><span>Customer</span><span>Items</span><span>Total</span><span>Payment</span><span>Status</span></div>{orders.length?orders.map(o=><div className="orders-row" key={o.id}><span><b>{o.id}</b><small>{new Date(o.createdAt).toLocaleString('en-IN')}</small></span><span><b>{o.customer.name || 'Customer'}</b><small>{o.customer.mobile}<br/>{o.customer.city}</small></span><span>{o.items.reduce((s,i)=>s+i.qty,0)} item(s)</span><span><b>{money(o.total)}</b></span><span>{o.payment}</span><span><select value={o.status} onChange={e=>saveOrders(orders.map(x=>x.id===o.id?{...x,status:e.target.value}:x))}>{['New','Confirmed','Packed','Shipped','Out for Delivery','Delivered','Cancelled','Returned'].map(s=><option key={s}>{s}</option>)}</select></span></div>):<div className="admin-empty">No demo orders yet. Complete checkout on the storefront to create one.</div>}</div>
+      </div>}
+
+      {tab==='security' && <div className="admin-page narrow">
+        <div className="admin-heading"><div><span>DEMO ACCESS</span><h1>Access & reset</h1><p>Change the demo admin password or restore the complete website demo.</p></div></div>
+        <div className="admin-form-card"><h3>Admin password</h3><div className="admin-inline"><input type="password" placeholder="New password" value={newPin} onChange={e=>setNewPin(e.target.value)}/><button className="admin-primary" onClick={()=>{if(newPin.length<6)return flash('Use at least 6 characters');localStorage.setItem('vandana-admin-pin',newPin);setNewPin('');flash('Admin password changed')}}><Save/> Update password</button></div>
+          <h3>Reset demo data</h3><p className="admin-note">This removes custom branding, products, orders and resets the admin password to the demo default.</p><button className="admin-danger-wide" onClick={()=>{if(!confirm('Reset the entire Vandana demo?'))return;['vandana-site-config','vandana-products','vandana-orders','vandana-cart','vandana-wishlist','vandana-admin-pin'].forEach(k=>localStorage.removeItem(k));setConfig(defaultSiteConfig);setProducts(defaultProducts);setOrders([]);flash('Demo reset complete')}}><RefreshCcw/> Reset complete demo</button>
+        </div>
+      </div>}
+    </section>
+
+    {editing && <div className="admin-modal-backdrop"><form className="admin-modal" onSubmit={submitProduct}><div className="admin-modal-head"><div><span>PRODUCT EDITOR</span><h2>{products.some(p=>p.id===editing.id)?'Edit product':'Add product'}</h2></div><button type="button" onClick={()=>setEditing(null)}><X/></button></div>
+      <div className="admin-grid two"><label>Product name<input required value={editing.name} onChange={e=>setEditing({...editing,name:e.target.value})}/></label><label>Slug<input value={editing.slug} placeholder="auto-generated" onChange={e=>setEditing({...editing,slug:e.target.value})}/></label></div>
+      <div className="admin-grid three"><label>Category<select value={editing.category} onChange={e=>setEditing({...editing,category:e.target.value as Product['category']})}><option>Women</option><option>Men</option><option>Kids</option></select></label><label>Subcategory<input required value={editing.subcategory} onChange={e=>setEditing({...editing,subcategory:e.target.value})}/></label><label>Badge<input value={editing.badge||''} onChange={e=>setEditing({...editing,badge:e.target.value})}/></label></div>
+      <div className="admin-grid four"><label>Price<input required type="number" min="0" value={editing.price} onChange={e=>setEditing({...editing,price:Number(e.target.value)})}/></label><label>MRP<input required type="number" min="0" value={editing.mrp} onChange={e=>setEditing({...editing,mrp:Number(e.target.value)})}/></label><label>Stock<input required type="number" min="0" value={editing.stock} onChange={e=>setEditing({...editing,stock:Number(e.target.value)})}/></label><label>Rating<input type="number" min="0" max="5" step=".1" value={editing.rating} onChange={e=>setEditing({...editing,rating:Number(e.target.value)})}/></label></div>
+      <div className="admin-grid two"><label>Sizes, comma separated<input value={editing.sizes.join(', ')} onChange={e=>setEditing({...editing,sizes:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)})}/></label><label>Colours, comma separated<input value={editing.colors.join(', ')} onChange={e=>setEditing({...editing,colors:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)})}/></label></div>
+      <label>Description<textarea rows={3} value={editing.description} onChange={e=>setEditing({...editing,description:e.target.value})}/></label>
+      <div className="admin-image-edit"><div><img src={editing.image} alt="Primary"/><label>Primary image URL<input value={editing.image} onChange={e=>setEditing({...editing,image:e.target.value})}/></label><label className="upload-btn"><Upload/> Upload primary<input type="file" accept="image/*" onChange={e=>onProductImage(e,'image')}/></label></div><div><img src={editing.image2} alt="Secondary"/><label>Secondary image URL<input value={editing.image2} onChange={e=>setEditing({...editing,image2:e.target.value})}/></label><label className="upload-btn"><Upload/> Upload secondary<input type="file" accept="image/*" onChange={e=>onProductImage(e,'image2')}/></label></div></div>
+      <div className="admin-modal-foot"><button type="button" onClick={()=>setEditing(null)}>Cancel</button><button className="admin-primary" type="submit"><Save/> Save product</button></div>
+    </form></div>}
+  </div>
+}
